@@ -35,6 +35,7 @@ top
 	nop
 	nop
 	nop
+	nop
 	movlw	0xff
 	movwf	PORTB
 	nop
