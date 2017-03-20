@@ -1,113 +1,266 @@
 ;Griffin Obeid
-;COSC 422
-;Pulse servo with a timer interrupt
-;We'll use the timer to generate an interrupt every 20 milliseconds
-
-
-	LIST	p=16F628		;tell assembler what chip we are using
-	include "P16F628.inc"		;include the defaults for the chip
-	ERRORLEVEL	0,	-302	;suppress bank selection messages
-	__config 0x3D18			;sets the configuration settings (oscillator type etc.)
-
-; Registers we'll need:
+;Make the robot move forward using TMR0 and TMR2
+;Some code borrowed from the second group of grad Students to present.
 ;
-; INTCON=0x0B
-;		7	6	5	4	3	2	1	0
-;		GIE	EEIE	TOIE	INTE	RBIE	TOIF	INTF	RBIF
-; OPTION=0X81
-;		RBPU	INTEDG	TOCS	TOSE	PSA	PS2	PS1	PS0
-;
-;		RBPU<-1 PORT B pull up resistors disabled
-;		INTEGD<-1 rising edge on RB0/int
-;		TOCS<-1 source is RB0, <-0 source is internal clock
-;		PSA<-1 WDT, <-0 Timer0
-;		PS2:PS0 prescaler 000<-wdt 1:1, timer0 1:2,etc . timer0 1:1 prescaler, set PSA<-1
-;
+;In this program TMR0 deals with one wheel
+;While TMR2 is on the other wheel.
+;The main program body (loop) will deal with the sensors
 
-;-------------------------------------------------------------------------------
-	cblock	0X20
-		COUNT
-		COUNT1
+	LIST	 p=16F628		;tell assembler what chip we are using
+	include  "P16F628.inc"	;include the defaults for the chip
+	__config 0x3D18			;sets the configuration settings
+
+cblock 	0x20 				;start of general purpose registers
+
+	controlR				;counter to toggle between 20ms and 1ms
+	controlL				;counter to toggle between 20ms and 2ms
+	CounterA
+	CounterB
+	CounterC
+
 	endc
 
-	org	0x00
-	goto start_it
+	;as usual, an interrupt sets the PC to 0x04
+	org		0x00
+	goto	main
+	org		0x04
+	goto	isr
 
-; send out a high pulse for depending on A1A0
-;
-;	A1	A0	Pulse	Servo Position (hopefully)
-;	0	0	1.0	Completely clockwise
-;	0	1	1.33	One third counterclockwise from preceeding
-;	1	0	1.66	Two thirds counterclockwise
-;	1	1	2.0	Fully counterclockwise
-;-------------------------------------------------------------------------------
-	org 0x04		         	;interrupt vector
-	movlw 0xff
-	movwf	PORTB		     	;turn on lights
-	call	OnePointZero	 	;we know there is a pulse of at least 1.0 msec
+main
 
-	btfsc	PORTA,0
-	call	PointThreeThree	  	;A0=1, so pulse another 0.33 msec
-	btfss	PORTA,1		      	;A1=1, so skip next statement
-	goto 	Finish_Up
-	call	PointThreeThree	  	;pulse another 0.33 msec
-	call	PointThreeThree
-
-Finish_Up
-	movlw	0x00
-	movwf	PORTB		       	;turn lights off
-	movlw	d'99'		       	;set up timer 0 interrupt for 20 msec
-	movwf	TMR0
-	bcf	    INTCON,T0IF	        ;IMPORTANT - re-enable timer interrupt
-	retfie
-;-------------------------------------------------------------------------------
-start_it						;Main
-
+	;turn comparators off (make it like a 16F84)
 	movlw	0x07
-	movwf	CMCON				;turn comparators off (make it like a 16F84)
+	movwf	CMCON
 
-	clrwdt						;just make sure nothing goes off!
 
-	bsf	STATUS,RP0              ;Bank 1
-	movlw	b'11010110'
-	movwf	OPTION_REG	        ;128-1 prescaler with timer0
-	movlw	0x00
-	movwf	TRISB		        ;Port B is output
+
+;in OPTION_REG:
+;bit 5 - enable TMR0
+;bit 3 - assign prescaler to TMR0
+;bits 2:0 - set prescaler to 1:128
+	banksel	OPTION_REG
+	movlw	b'10000110'
+	movwf	OPTION_REG
+
+
+;in T2CON:
+;bits 6:3 - set postscaler to 1:8
+;bit 2 - turn TMR2 on
+;bits 1:0 - set prescaler to 1:16
+	banksel	T2CON
+	movlw	b'01110111'
+	movwf	T2CON
+
+
+;enable TMR2 interrupt
+	banksel	PIE1
+	bsf		PIE1,TMR2IE
+
+
+;bit 7 - enable global interrupt (GIE)
+;bit 6 - enable peripheral interrupt
+;bit 5 - enable TMR0 interrupt
+	movlw	b'11100000'
+	movwf	INTCON
+
+	bsf		STATUS,RP0		;select bank 1
 	movlw	0xff
-	movwf	TRISA		        ;Port A is input
-	bcf	STATUS,RP0	            ;back to bank 0
+	movwf	TRISB			;portb is input
+	movlw	b'11111000'
+	movwf	TRISA			;Porta 7:3 input, 2:0 output
+	bcf		STATUS,RP0		;return to bank 0
 
-	bsf	INTCON,GIE	            ;enable global interrupts
-	bsf	INTCON,T0IE	            ;enable timer 0 interrupt
-	bcf	INTCON,T0IF
+;PROGRAM BODY
+;Movement of the wheels is controlled entirely through
+;interrupts, leaving our program body free to deal with anything else really
+;RA1 has right wheel | RA2 has left wheel
+top
+	call 	init_Servos
+loop
+	btfss	PORTB, 6		;RB6 has antenna sensors
+	call	Reverse_and_turn
+	goto	loop
 
-	movlw	d'99'		        ;256-99=157  , 157*128 is 20096, about 20 msec
+;isr
+;SUBROUTINE
+;Checks INTCON,2 (TMR0 flag) and PIR1,1 (TMR2 flag)
+;to determine which threw the interrupt and calls
+;appropriate subroutine.
+isr
+	btfsc	INTCON,2		;check TMR0 interrupt flag
+	call 	Right_wheel
+	btfsc	PIR1,1			;check TMR2 interrupt flag
+	call 	Left_wheel
+
+	retfie
+
+;Right_wheel
+;SUBROUTINE
+;Toggles RA1 between low for 20ms and high for 1ms.
+;Bit 0 of controlR is used as a flag.
+Right_wheel
+	bcf		INTCON,2
+
+	btfss	controlR,0
+	bsf		PORTA,1
+	btfsc	controlR,0
+	bcf		PORTA,1
+
+	btfss	controlR,0		;modify value in TMR0
+	movlw	d'248'			;1 ms
+	btfsc	controlR,0
+	movlw	d'100'			;20 ms
+	movwf	TMR0
+	incf	controlR		;increment controlR (toggle "flag")
+
+	return
+
+;Right_wheel_reverse
+;SUBROUTINE
+;Toggles RA1 between low for 20ms and high for 2ms.
+;Bit 0 of controlR is used as a flag.
+Right_wheel_reverse
+	bcf		INTCON,2
+
+	btfss	controlR,0
+	bsf		PORTA,1
+	btfsc	controlR,0
+	bcf		PORTA,1
+
+	btfss	controlR,0		;modify value in TMR0
+	movlw	d'240'			;2 ms
+	btfsc	controlR,0
+	movlw	d'100'			;20 ms
+	movwf	TMR0
+	incf	controlR		;increment controlR (toggle "flag")
+
+	return
+
+;Left_wheel
+;SUBROUTINE
+;Toggles RA2 between low for 20ms and high for 2ms.
+;Bit 0 of controlL is used as a flag.
+Left_wheel
+	bcf		PIR1,1
+
+	btfss	controlL,0
+	bsf		PORTA,2
+	btfsc	controlL,0
+	bcf		PORTA,2
+
+	btfss	controlL,0		;modify value in PR2
+	movlw	d'16'			;2 ms
+	btfsc	controlL,0
+	movlw	d'156'			;20 ms
+
+	banksel	PR2
+	movwf	PR2
+	bcf		STATUS,RP0
+	incf	controlL		;increment controlL (toggle "flag")
+
+	return
+
+;Left_wheel_reverse
+;SUBROUTINE
+;Toggles RA2 between low for 20ms and high for 1ms.
+;Bit 0 of controlL is used as a flag.
+Left_wheel_reverse
+	bcf		PIR1,1
+
+	btfss	controlL,0
+	bsf		PORTA,2
+	btfsc	controlL,0
+	bcf		PORTA,2
+
+	btfss	controlL,0		;modify value in PR2
+	movlw	d'8'			;1 ms
+	btfsc	controlL,0
+	movlw	d'156'			;20 ms
+
+	banksel	PR2
+	movwf	PR2
+	bcf		STATUS,RP0
+	incf	controlL		;increment controlL (toggle "flag")
+
+	return
+
+;Reverse_and_turn
+;SUBROUTINE
+;This subroutine gets called when the antenna sensor rams into the wall
+;Reverses the dude, turns the dude, then dude starts moving forward again
+Reverse_and_turn
+	call	STOP
+	call	init_Servos
+	btfsc	INTCON,2		;check TMR0 interrupt flag
+	call 	Right_wheel_reverse
+	btfsc	PIR1,1			;check TMR2 interrupt flag
+	call 	Left_wheel_reverse
+	call	DelayOneSecond
+	call	DelayOneSecond
+	call 	STOP
+	call	init_Servos
+	btfsc	INTCON,2		;check TMR0 interrupt flag
+	call 	Right_wheel
+	btfsc	PIR1,1			;check TMR2 interrupt flag
+	call 	Left_wheel_reverse
+	call	DelayOneSecond
+	call	STOP
+	call	init_Servos
+	call	isr
+	return
+
+;init_Servos
+;SUBROUTINE
+;Must Be called before the motor starts back up
+init_Servos
+	clrf	controlR
+	clrf	controlL
+
+	;set RA1 low and start TMR0 at 100
+	;(256 - 100) * 128 ~ 20,000?, or 20ms
+	bcf		PORTA,1
+	movlw	d'100'
 	movwf	TMR0
 
+	;TMR2 resets when it matches value in PR2
+	;set PR2 to 156
+	;156 * 128 ~ 20,000?, or 20ms
+	banksel	PR2
+	movlw	d'156'
+	movwf	PR2
+	bcf		STATUS,RP0		;return to bank 0
 
-	movlw	0x00
-	movwf	PORTB				;turn off lights
-more
-	goto more					;wait for an interrupt
-;-------------------------------------------------------------------------------
-OnePointZero					;1.0 millisecond delay loop
-	movlw 0x02
-	movwf	COUNT1
-xxx
-	movlw	d'165'
-	movwf	COUNT
-here
-	decfsz	COUNT
-	goto here
-	decfsz	COUNT1
-	goto xxx
+	bcf		PORTA,2			;set RA2 low
 	return
-;-------------------------------------------------------------------------------
-PointThreeThree					;0.33 millisecond delay loop
-	movlw	d'108'
-	movwf	COUNT
-here2
-	decfsz	COUNT
-	goto 	here2
+
+;DelayOneSecond
+;SUBROUTINE DELAY
+;Timed delay for 1 second
+DelayOneSecond
+	movlw D'6'
+	movwf CounterC
+	movlw D'24'
+	movwf CounterB
+	movlw D'168'
+	movwf CounterA
+keepGoing
+	decfsz CounterA,1
+	goto keepGoing
+	decfsz CounterB,1
+	goto keepGoing
+	decfsz CounterC,1
+	goto keepGoing
 	return
+
+;STOP
+;SUBROUTINE
+;Stops the motors
+STOP
+	movlw	d'0'
+	movwf	TMR0
+	movlw	d'256'
+	banksel	PR2
+	movwf	PR2
+	return
+
 	end
