@@ -1,7 +1,3 @@
-
-
-; filename: using_timer_interrupts.asm
-
 ; This program demonstrates two of the PIC 16F628's timers and
 ; the use of timer interrupts to trigger events. Each timer
 ; controls the pulse modulation on one wheel of the Boebot.
@@ -45,7 +41,7 @@ init
 	banksel	OPTION_REG
 
 	; in OPTION_REG:
-	;  bit 6 - 1: Rising edge interrupts 0: falling edge interrupts
+	;  bit 6 = 1: Rising edge interrupts 0: falling edge interrupts
 	;  bit 5 - enable TMR0
 	;  bit 3 - assign prescaler to TMR0
 	;  bits 2:0 - set prescaler to 1:128
@@ -68,11 +64,10 @@ init
 	; bit 7 - enable global interrupt (GIE)
 	; bit 6 - enable peripheral interrupt
 	; bit 5 - enable TMR0 interrupt
-	; bit 4 - enable INTE (External interrupts) - for the IR sensor on RB0
 	movlw	b'11100000'
 	movwf	INTCON
 
-	bsf	STATUS,RP0	;bank 1	
+	bsf	STATUS,RP0	;bank 1
 	movlw	b'11111000'
 	movwf	TRISA		;porta is input
 	movlw	b'11111111'
@@ -84,7 +79,7 @@ init
 ; interrupts, leaving our program body free to deal with the IR sensor
 ;
 ; RA1 = right wheel, RA2 = left wheel
-
+top
 	clrf	controlR
 	clrf	controlL
 
@@ -112,13 +107,13 @@ loop
 	btfss	PORTB, 0
 	goto	STOP
 	goto	loop
-	
+
 motorIsOff
 	nop
 	nop
 	nop
 	btfss	PORTB, 0
-	goto	START
+	goto	top				;start the motor back up
 	goto	motorIsOff
 
 ; isr
@@ -189,13 +184,8 @@ Left_wheel
 
 	return
 
-START
-	call	isr
-	goto	loop
-	return
-	
 STOP
-	movlw	d'0'	
+	movlw	d'0'
 	movwf	TMR0
 	movlw	d'256'
 	banksel	PR2
