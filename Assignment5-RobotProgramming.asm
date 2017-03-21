@@ -6,33 +6,29 @@
 ;While TMR2 is on the other wheel.
 ;The main program body (loop) will deal with the sensors
 
-	LIST	 p=16F628		;tell assembler what chip we are using
+	LIST	 p=16F628	;tell assembler what chip we are using
 	include  "P16F628.inc"	;include the defaults for the chip
-	__config 0x3D18			;sets the configuration settings
+	__config 0x3D18		;sets the configuration settings
 
-cblock 	0x20 				;start of general purpose registers
+cblock 	0x20 			;start of general purpose registers
 
-	controlR				;counter to toggle between 20ms and 1ms
-	controlL				;counter to toggle between 20ms and 2ms
+	controlR		;counter to toggle between 20ms and 1ms
+	controlL		;counter to toggle between 20ms and 2ms
 	CounterA
 	CounterB
 	CounterC
 
 	endc
 
-	;as usual, an interrupt sets the PC to 0x04
-	org		0x00
+	org	0x00
 	goto	main
-	org		0x04
+	org	0x04		;as usual, an interrupt sets the PC to 0x04
 	goto	isr
 
 main
-
 	;turn comparators off (make it like a 16F84)
 	movlw	0x07
 	movwf	CMCON
-
-
 
 ;in OPTION_REG:
 ;bit 5 - enable TMR0
@@ -42,7 +38,6 @@ main
 	movlw	b'10000110'
 	movwf	OPTION_REG
 
-
 ;in T2CON:
 ;bits 6:3 - set postscaler to 1:8
 ;bit 2 - turn TMR2 on
@@ -51,11 +46,9 @@ main
 	movlw	b'01110111'
 	movwf	T2CON
 
-
 ;enable TMR2 interrupt
 	banksel	PIE1
-	bsf		PIE1,TMR2IE
-
+	bsf	PIE1,TMR2IE
 
 ;bit 7 - enable global interrupt (GIE)
 ;bit 6 - enable peripheral interrupt
@@ -63,12 +56,12 @@ main
 	movlw	b'11100000'
 	movwf	INTCON
 
-	bsf		STATUS,RP0		;select bank 1
-	movlw	0xff
-	movwf	TRISB			;portb is input
+	bsf	STATUS,RP0		;select bank 1
+	movlw	b'11110000'		
+	movwf	TRISB			;portb 7:4 input, 3:0 output
 	movlw	b'11111000'
 	movwf	TRISA			;Porta 7:3 input, 2:0 output
-	bcf		STATUS,RP0		;return to bank 0
+	bcf	STATUS,RP0		;return to bank 0
 
 ;PROGRAM BODY
 ;Movement of the wheels is controlled entirely through
@@ -77,7 +70,7 @@ main
 top
 	call 	init_Servos
 loop
-	btfss	PORTB, 6		;RB6 has antenna sensors
+	btfss	PORTB, 0		;RB0 has antenna sensors
 	call	Reverse_and_turn
 	goto	loop
 
@@ -93,18 +86,40 @@ isr
 	call 	Left_wheel
 
 	retfie
+	
+;isr2
+;SUBROUTINE
+;Same as isr but go in reverse instead
+isr2
+	btfsc	INTCON,2		;check TMR0 interrupt flag
+	call 	Right_wheel_reverse
+	btfsc	PIR1,1			;check TMR2 interrupt flag
+	call 	Left_wheel_reverse
+
+	retfie
+	
+;isr3
+;SUBROUTINE
+;Same as isr but turns the dude instead
+isr3
+	btfsc	INTCON,2		;check TMR0 interrupt flag
+	call 	Right_wheel_reverse
+	btfsc	PIR1,1			;check TMR2 interrupt flag
+	call 	Left_wheel
+
+	retfie
 
 ;Right_wheel
 ;SUBROUTINE
 ;Toggles RA1 between low for 20ms and high for 1ms.
 ;Bit 0 of controlR is used as a flag.
 Right_wheel
-	bcf		INTCON,2
+	bcf	INTCON,2
 
 	btfss	controlR,0
-	bsf		PORTA,1
+	bsf	PORTA,1
 	btfsc	controlR,0
-	bcf		PORTA,1
+	bcf	PORTA,1
 
 	btfss	controlR,0		;modify value in TMR0
 	movlw	d'248'			;1 ms
@@ -113,19 +128,19 @@ Right_wheel
 	movwf	TMR0
 	incf	controlR		;increment controlR (toggle "flag")
 
-	return
+	retfie
 
 ;Right_wheel_reverse
 ;SUBROUTINE
 ;Toggles RA1 between low for 20ms and high for 2ms.
 ;Bit 0 of controlR is used as a flag.
 Right_wheel_reverse
-	bcf		INTCON,2
+	bcf	INTCON,2
 
 	btfss	controlR,0
-	bsf		PORTA,1
+	bsf	PORTA,1
 	btfsc	controlR,0
-	bcf		PORTA,1
+	bcf	PORTA,1
 
 	btfss	controlR,0		;modify value in TMR0
 	movlw	d'240'			;2 ms
@@ -134,19 +149,19 @@ Right_wheel_reverse
 	movwf	TMR0
 	incf	controlR		;increment controlR (toggle "flag")
 
-	return
+	retfie
 
 ;Left_wheel
 ;SUBROUTINE
 ;Toggles RA2 between low for 20ms and high for 2ms.
 ;Bit 0 of controlL is used as a flag.
 Left_wheel
-	bcf		PIR1,1
+	bcf	PIR1,1
 
 	btfss	controlL,0
-	bsf		PORTA,2
+	bsf	PORTA,2
 	btfsc	controlL,0
-	bcf		PORTA,2
+	bcf	PORTA,2
 
 	btfss	controlL,0		;modify value in PR2
 	movlw	d'16'			;2 ms
@@ -155,22 +170,22 @@ Left_wheel
 
 	banksel	PR2
 	movwf	PR2
-	bcf		STATUS,RP0
+	bcf	STATUS,RP0
 	incf	controlL		;increment controlL (toggle "flag")
 
-	return
+	retfie
 
 ;Left_wheel_reverse
 ;SUBROUTINE
 ;Toggles RA2 between low for 20ms and high for 1ms.
 ;Bit 0 of controlL is used as a flag.
 Left_wheel_reverse
-	bcf		PIR1,1
+	bcf	PIR1,1
 
 	btfss	controlL,0
-	bsf		PORTA,2
+	bsf	PORTA,2
 	btfsc	controlL,0
-	bcf		PORTA,2
+	bcf	PORTA,2
 
 	btfss	controlL,0		;modify value in PR2
 	movlw	d'8'			;1 ms
@@ -179,34 +194,29 @@ Left_wheel_reverse
 
 	banksel	PR2
 	movwf	PR2
-	bcf		STATUS,RP0
+	bcf	STATUS,RP0
 	incf	controlL		;increment controlL (toggle "flag")
 
-	return
+	retfie
 
 ;Reverse_and_turn
 ;SUBROUTINE
 ;This subroutine gets called when the antenna sensor rams into the wall
 ;Reverses the dude, turns the dude, then dude starts moving forward again
 Reverse_and_turn
-	call	STOP
-	call	init_Servos
-	btfsc	INTCON,2		;check TMR0 interrupt flag
-	call 	Right_wheel_reverse
-	btfsc	PIR1,1			;check TMR2 interrupt flag
-	call 	Left_wheel_reverse
+	goto	init_Servos
+	goto	isr2
+	
 	call	DelayOneSecond
 	call	DelayOneSecond
-	call 	STOP
-	call	init_Servos
-	btfsc	INTCON,2		;check TMR0 interrupt flag
-	call 	Right_wheel
-	btfsc	PIR1,1			;check TMR2 interrupt flag
-	call 	Left_wheel_reverse
+	
+	goto	init_Servos
+	goto	isr3
+	
 	call	DelayOneSecond
-	call	STOP
-	call	init_Servos
-	call	isr
+	
+	goto	init_Servos
+	goto	isr
 	return
 
 ;init_Servos
@@ -218,7 +228,7 @@ init_Servos
 
 	;set RA1 low and start TMR0 at 100
 	;(256 - 100) * 128 ~ 20,000?, or 20ms
-	bcf		PORTA,1
+	bcf	PORTA,1
 	movlw	d'100'
 	movwf	TMR0
 
@@ -228,39 +238,28 @@ init_Servos
 	banksel	PR2
 	movlw	d'156'
 	movwf	PR2
-	bcf		STATUS,RP0		;return to bank 0
+	bcf	STATUS,RP0		;return to bank 0
 
-	bcf		PORTA,2			;set RA2 low
+	bcf	PORTA,2			;set RA2 low
 	return
 
 ;DelayOneSecond
 ;SUBROUTINE DELAY
 ;Timed delay for 1 second
 DelayOneSecond
-	movlw D'6'
-	movwf CounterC
-	movlw D'24'
-	movwf CounterB
-	movlw D'168'
-	movwf CounterA
+	movlw	d'6'
+	movwf	CounterC
+	movlw	d'24'
+	movwf	CounterB
+	movlw	d'168'
+	movwf	CounterA
 keepGoing
-	decfsz CounterA,1
-	goto keepGoing
-	decfsz CounterB,1
-	goto keepGoing
-	decfsz CounterC,1
-	goto keepGoing
-	return
-
-;STOP
-;SUBROUTINE
-;Stops the motors
-STOP
-	movlw	d'0'
-	movwf	TMR0
-	movlw	d'256'
-	banksel	PR2
-	movwf	PR2
+	decfsz	CounterA, 1
+	goto	keepGoing
+	decfsz	CounterB, 1
+	goto	keepGoing
+	decfsz	CounterC, 1
+	goto	keepGoing
 	return
 
 	end
