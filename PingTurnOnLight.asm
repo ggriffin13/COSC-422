@@ -13,6 +13,7 @@
     cblock 	0x20 		;start of general purpose registers
 	   counterA		;counterA is used in delay routines
 	   counterB		;counterB is used in delay routines
+       decrementer  ;decrement from 145 to 0 for waiting for signal
 	endc
 
 ;same setup for every program using interrupts
@@ -29,7 +30,7 @@ main
 ;turn B0 interrupts on (peripheral)
     bsf	    INTCON, GIE		;enable interrupts
     bsf	    INTCON, INTE	;B0 is the interrupt line
-    bcf     INTCON, T0IE
+    bcf     INTCON, T0IE    ;disable interrupts on TMR0 until ready
 
 ;set up the I/O
     bsf	    STATUS,RP0
@@ -46,12 +47,28 @@ main
 ;Program Body:
 loop
     call    listen
+    bcf     PORTA, 1
     goto    loop		  ;Lets  go forward until we hit something
 
 ;Subroutine: listen
-;Count
+;
 listen
-
+    ;we will start a timer and if we get a signal back before the timer overflows
+    ;that is when we turn a light on.
+    call    pulsePing
+    movlw   d'100'
+    movwf   decrementer
+testing
+    btfss   PORTB, 0
+    goto    turnOnLED
+    decfsz  decrementer, f
+    goto    testing
+    goto    done
+turnOnLED
+    bsf     PORTA, 1
+    clrf    decrementer
+done
+    return
 
 
 
@@ -77,15 +94,11 @@ wait1ms_in
 ;Subroutine: pulsePing
 ;Pulse RB0 line high for 3-4 microseconds
 pulsePing
-
     bsf     PORTB, 0
     nop
     nop
     bcf     PORTB, 0
-    goto    wait_865micro
-    movlw   d'99'
-    movwf   TMR0
-    bsf     INTCON, T0IE
+    call    wait_865micro
 
     return
 
@@ -108,8 +121,8 @@ again
 
 ;Interrupt Subroutine
 isr
-    ;get the value of tmr0 here
-    
+
+
     goto    endIsr		;back to going forward
 
 endIsr
