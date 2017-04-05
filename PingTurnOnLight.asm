@@ -14,6 +14,7 @@
 	   counterA		;counterA is used in delay routines
 	   counterB		;counterB is used in delay routines
        decrementer  ;decrement from 145 to 0 for waiting for signal
+       interrupted
 	endc
 
 ;same setup for every program using interrupts
@@ -28,78 +29,50 @@ main
     movwf   CMCON
 
 ;turn B0 interrupts on (peripheral)
-    bsf	    INTCON, GIE		;enable interrupts
-    bsf	    INTCON, INTE	;B0 is the interrupt line
-    bcf     INTCON, T0IE    ;disable interrupts on TMR0 until ready
+    bsf	   INTCON, GIE		;enable interrupts
+
+    bcf    INTCON, T0IE    ;disable interrupts on TMR0 until ready
 
 ;set up the I/O
     bsf	    STATUS,RP0
     bcf	    0x81, INTEDG	;falling edge interrupts
-    movlw   b'11111111'
+    movlw   b'11111101'
     movwf   TRISB		    ;PORTB is input
     movlw   b'00000000'
     movwf   TRISA		    ;PORTA is output
     bcf	    STATUS,RP0		;return to bank 0
 
-    movlw   B'11011000'
+    movlw   B'11011110'
     movwf   OPTION_REG      ;TMR0 Setup
 
-;Program Body:
-loop
-    call    listen
-    bcf     PORTA, 1
-    goto    loop		  ;Lets  go forward until we hit something
-
-;Subroutine: listen
-;
-listen
-    ;we will start a timer and if we get a signal back before the timer overflows
-    ;that is when we turn a light on.
-    call    pulsePing
-    movlw   d'100'
-    movwf   decrementer
-testing
-    btfss   PORTB, 0
-    goto    turnOnLED
-    decfsz  decrementer, f
-    goto    testing
-    goto    done
-turnOnLED
     bsf     PORTA, 1
-    clrf    decrementer
-done
-    return
+    clrf    interrupted
 
+loop
+    ;turn on the led if we get a pulse back within the time it takes for
+    ;it to decrements
+    call    pulsePing
+    clrf    TMR0
+    movlw   d'113'          ;20 ms in tmr0 before pulsing again.
+    movwf   TMR0
+    bsf     INTCON, T0IE    ;enable tmr0 interrupts
 
-
-;Subroutine: wait1ms
-;Wait for 1 ms so that we can pulse our servos motors high for the correct
-;amount of time.
-wait1ms
-    movlw   0xC6		;1 ms
-    movwf   counterA
-    movlw   0x01
-    movwf   counterB
-wait1ms_in
-    decfsz  counterA, f
-    goto    $+2
-    decfsz  counterB, f
-    goto    wait1ms_in
-
-    goto    $+1			;3 cycles
-    nop
-
-    return			;4 cycles
-
+waitForT0
+    btfss   interrupted, 1
+    goto    waitForT0
+    clrf    interrupted
+    goto    loop
 ;Subroutine: pulsePing
 ;Pulse RB0 line high for 3-4 microseconds
 pulsePing
-    bsf     PORTB, 0
+    bcf     INTCON, INTE
+    bsf     PORTB, 1
     nop
     nop
-    bcf     PORTB, 0
+    nop
+    bcf     PORTB, 1
     call    wait_865micro
-
+    bsf     INTCON, INTE	    ;B0 is the interrupt line
     return
 
 ;Subroutine: wait_865micro
@@ -121,12 +94,13 @@ again
 
 ;Interrupt Subroutine
 isr
+    btfsc   INTCON, INTF
+    bsf     PORTA, 2
 
-
-    goto    endIsr		;back to going forward
-
-endIsr
-    bcf	    INTCON,INTF		;reset the interrupt
+    movlw   d'1'
+    movwf   interrupted
+    bcf     INTCON, INTF
+    bcf     INTCON, T0IF
     retfie
 
 	end
