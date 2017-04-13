@@ -1,9 +1,4 @@
-;Griffin Obeid
-;3/22/2017
-;===============================================================================
-;When this program is finished it will turn on a light when the PING))) sesnsor
-;receives its ultrasonic signal back.
-;===============================================================================
+;TODO: Add header
 ; uncomment following two lines if using 16f627 or 16f628.
     LIST    p=16F628  ;tell assembler what chip we are using
     include "P16F628.inc" ;include the defaults for the chip
